@@ -1,0 +1,730 @@
+---
+title: "Final Project: Explaining the Variability in Mental Illness Prevalence"
+subtitle: "Oyo and Catie"
+output: html_document
+runtime: shiny
+---
+  
+```{r, setup, echo=FALSE, message=FALSE}
+library(stringr)
+library(rvest)
+library(httr)
+library(shiny)
+library(broom)
+library(usmap)
+library(ggplot2)
+library(maps)
+library(tidyverse)
+```
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(fig.width=5, fig.height=4)
+```
+
+
+There are many biological, economic and social factors that play a role in the prevalence of mental disorders. Observing the trends in these diagnoses can offer guidance as to what causes such disorders as well as where mental health resources are most needed. The United States has the third largest proportion of depressed citizens, with one of the largest trends in growth. In this final project, we have looked at the prevalence of mental illness as it relates to states’ poverty rates, sunshine, and health care provider availability. Our data has been collected from a 2017 Mental Health America study in addition to United States Census Bureau poverty statistics collected in the same year. Our analysis is meant to address the following question: how does mental illness differ throughout the states in the US, and what factors play a role in this difference?
+
+| Indicator	| Description of Measure | 
+|--------|-----------|
+| Adults with Any Mental Illness (AMI) | Having a diagnosable mental, behavioral, or emotional disorder, other than a developmental or substance use disorder. |
+| Mental Health Workforce Availability | Ratio of the state population to the number of mental health providers (psychiatrists, psychologists, clinical social workers, counselors, marriage and family therapists and advanced practice nurses specializing in mental health care). | 
+| Adults with Serious Thoughts of Suicide | Adults with serious thoughts of suicide in the past year. |
+| Prevalence of Major Depressive Disorder (MDD) | Percentage of citizens diagnosed with MDD as defined in the DSM-5 within the past year. | 
+| State Sun | Annual averages for percent of days with sun (percentage of time between sunrise and sunset that sunshine reaches the ground). | 
+| Poverty Rate | Percentage of citizens in poverty by state, United States Census Bureau 2017. |
+
+
+# Exploratory Data Analysis
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+# adult mental health page
+adult_url = "https://www.mhanational.org/issues/2020/mental-health-america-adult-data"
+adultdata <- read_html(adult_url)
+adultdata <- html_nodes(adultdata, css="table")
+adult.tables=html_table(adultdata, header = TRUE, fill = TRUE)
+
+mentalillness <- html_table(adultdata, header=FALSE, fill=TRUE)[[2]]
+mental_illness <- 
+  as_tibble(mentalillness) %>%
+  filter(row_number() != 1) %>%
+  select(X2, X3) %>% 
+    rename(state = X2, AMI_prevalence= X3) %>%
+    mutate(AMI_prevalence = parse_number(AMI_prevalence))
+
+
+adultideation <- html_table(adultdata, header=FALSE, fill=TRUE)[[4]]
+ideation <- 
+  as_tibble(adultideation) %>%
+  filter(row_number() != 1) %>%
+  select(X2, X3) %>% 
+    rename(state = X2, ideation_prevalence= X3) %>%
+    mutate(ideation_prevalence = parse_number(ideation_prevalence))
+
+#kids health page
+kids_url = "https://www.mhanational.org/issues/2020/mental-health-america-youth-data"
+kiddata <- read_html(kids_url)
+kiddata <- html_nodes(kiddata, css="table")
+kid.tables = html_table(kiddata, header=TRUE, fill=TRUE)
+kid_data <- html_table(kiddata, header=FALSE, fill=TRUE)[[2]]
+
+youthMDE <- 
+  as_tibble(kid_data) %>%
+  filter(row_number() != 1) %>%
+  select(X2, X3) %>% 
+    rename(state = X2, youthMDE_prevalence= X3) %>% 
+    mutate(youthMDE_prevalence = parse_number(youthMDE_prevalence))
+
+# access to care page
+access_url = "https://www.mhanational.org/issues/2020/mental-health-america-access-care-data"
+accessdata <- read_html(access_url)
+accessdata <- html_nodes(accessdata, css="table")
+access.tables = html_table(accessdata, header=TRUE, fill=TRUE)
+access_data <- html_table(accessdata, header=FALSE, fill=TRUE)[[10]]
+
+workforce <- 
+  as_tibble(access_data) %>%
+  filter(row_number() != 1) %>%
+  select(X2, X3) %>% 
+    rename(state = X2, ratio= X3) %>% 
+    mutate(ratio = parse_number(ratio))
+
+```
+
+
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+sunny <- read_html("https://www.currentresults.com/Weather/US/average-annual-state-sunshine.php")
+
+sun <- html_nodes(sunny, css="table")
+all.tables=html_table(sun, header = TRUE, fill = TRUE)
+
+sun1 <- html_table(sun, header = FALSE, fill = TRUE)[[1]]
+
+sun2 <- html_table(sun, header = FALSE, fill = TRUE)[[2]]
+
+sun3 <- html_table(sun, header = FALSE, fill = TRUE)[[3]]
+
+
+sunstates <- rbind(sun1, sun2, sun3) %>% 
+  filter(row_number() != 1) %>%
+  filter(row_number() != 17) %>%
+  filter(row_number() != 35) %>%
+  select(X1, X3) %>% 
+  rename(state = X1, percent_sun= X3) %>%
+  mutate(percent_sun = parse_number(percent_sun))
+
+
+# table combining sun and mental illness prevalence
+
+sun_AMI<- sunstates %>% 
+  inner_join(mental_illness, by="state")
+
+
+# table combining adult ideation and sun
+
+sun_ideation <- sunstates %>% 
+  inner_join(ideation, by="state")
+
+# table combining adult ideation and AMI
+
+ideation_AMI<- ideation %>% 
+  inner_join(mental_illness, by="state")
+
+
+# table combining sun and depressive episode prevalence
+
+sunMDE<- sunstates %>% 
+  inner_join(youthMDE, by="state")
+
+
+# table combining sun and depressive episode prevalence
+
+resources<- mental_illness %>% 
+  inner_join(workforce, by="state")
+
+
+# Percent of People in Poverty by State: 2017 Census
+
+poverty_census <- read_csv("census.csv")
+data("poverty_census")
+poverty_census<- as_tibble(poverty_census)
+
+poverty_census <- 
+  as_tibble(poverty_census) %>% 
+  select("Table with row headers in column A and column headers in rows 4 through 5", X6) %>% 
+  remove_missing() %>% 
+  filter(row_number()!= 1) %>% 
+  rename(state="Table with row headers in column A and column headers in rows 4 through 5", poverty_rate = X6) %>% 
+  mutate(poverty_rate= parse_number(poverty_rate))
+
+# table combining poverty rates and mental illness
+poverty_AMI<- poverty_census %>% 
+  inner_join(mental_illness, by="state")
+
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#depression prevalence
+
+state_depressionrate <- read_csv("DepressionByStates.csv")
+data("state_depressionrate")
+state_depressionrate<- as_tibble(state_depressionrate)
+
+state_depression <- 
+  as_tibble(state_depressionrate) %>% 
+  select(states, "%") %>% 
+  rename(depression_rate = "%") %>% 
+  rename(state = states)
+
+sun_depression<- sunstates %>% 
+  inner_join(state_depression, by="state")
+```
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Any Mental Illness by Region
+
+midwest_AMI <- filter(mental_illness, state== "Iowa" | state== "Michigan" | state== "Minnesota" | state== "North Dakota" | state== "South Dakota" | state== "Wisconsin" | state== "Kansas" | state== "Nebraska" | state== "Missouri" | state== "Illinois" | state== "Indiana" | state== "Ohio")
+
+northeast_AMI <- filter(mental_illness, state== "Connecticut" | state== "Maine" | state== "Massachusetts" | state== "New Hampshire" | state== "New Jersey" | state== "New York" | state== "Pennsylvania" | state== "Rhode Island" | state== "Vermont" | state== "District of Colombia")
+
+pacific_northwest_AMI <- filter(mental_illness, state== "Washington" | state== "Oregon" | state== "California")
+
+west_AMI <- filter(mental_illness, state== "Montana" | state== "Wyoming" | state== "Nevada" | state== "Utah" | state== "Idaho")
+
+southwest_AMI <- filter(mental_illness, state== "Arizona" | state== "Colorado" | state== "New Mexico" | state== "Oklahoma" | state== "Texas" )
+
+south_AMI <- filter(mental_illness, state== "Arkansas" | state== "Louisiana" | state== "Kentucky" | state== "Tennessee" | state== "Mississippi" | state== "Alabama" | state== "Maryland" | state== "West Virginia" | state== "Virginia" | state== "Delaware" | state== "North Carolina"| state== "South Carolina" | state== "Florida")
+
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# midwest mean(AMI_prevalence): 26.9
+
+# northeast mean(AMI_prevalence): 24.2
+
+# pacific_northwest mean(AMI_prevalence): 26.0
+
+# west mean(AMI_prevalence): 30.0
+
+# southwest mean(AMI_prevalence): 32.9
+
+# south mean(AMI_prevalence): 31.3
+
+region <- c("midwest", "NE", "pacific_NW", "west", "southwest", "south")
+AMI_by_region <- c(26.9, 24.2, 26.0, 30.0, 32.9, 31.3)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+AMIregion.tbl <-  tibble(
+  region = region,
+  AMI_by_region = AMI_by_region)
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Youth Major Depressive Episode
+
+midwest_youthMDE <- filter(youthMDE, state== "Iowa" | state== "Michigan" | state== "Minnesota" | state== "North Dakota" | state== "South Dakota" | state== "Wisconsin" | state== "Kansas" | state== "Nebraska" | state== "Missouri" | state== "Illinois" | state== "Indiana" | state== "Ohio")
+
+northeast_youthMDE <- filter(youthMDE, state== "Connecticut" | state== "Maine" | state== "Massachusetts" | state== "New Hampshire" | state== "New Jersey" | state== "New York" | state== "Pennsylvania" | state== "Rhode Island" | state== "Vermont" | state== "District of Colombia")
+
+pacific_northwest_youthMDE <- filter(youthMDE, state== "Washington" | state== "Oregon" | state== "California")
+
+west_youthMDE <- filter(youthMDE, state== "Montana" | state== "Wyoming" | state== "Nevada" | state== "Utah" | state== "Idaho")
+
+southwest_youthMDE <- filter(youthMDE, state== "Arizona" | state== "Colorado" | state== "New Mexico" | state== "Oklahoma" | state== "Texas" )
+
+south_youthMDE <- filter(youthMDE, state== "Arkansas" | state== "Louisiana" | state== "Kentucky" | state== "Tennessee" | state== "Mississippi" | state== "Alabama" | state== "Maryland" | state== "West Virginia" | state== "Virginia" | state== "Delaware" | state== "North Carolina"| state== "South Carolina" | state== "Florida")
+
+
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# midwest mean(youthMDE_prevalence): 11.2
+
+# northeast mean(youthMDE_prevalence): 14.2
+
+# pacific_northwest mean(youthMDE_prevalence): 6.34
+
+# west mean(youthMDE_prevalence): 5.11
+
+# southwest mean(youthMDE_prevalence): 6.66
+
+# south mean(youthMDE_prevalence): 5.25
+
+region <- c("midwest", "NE", "pacific_NW", "west", "southwest", "south")
+youthMDE_by_region <- c(11.2, 14.2, 6.34, 5.11, 6.66, 5.25)
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+youthMDEregion.tbl <-  tibble(
+  region = region,
+  youthMDE_by_region = youthMDE_by_region)
+```
+
+
+
+
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Ideation
+
+midwest_ideation <- filter(ideation, state== "Iowa" | state== "Michigan" | state== "Minnesota" | state== "North Dakota" | state== "South Dakota" | state== "Wisconsin" | state== "Kansas" | state== "Nebraska" | state== "Missouri" | state== "Illinois" | state== "Indiana" | state== "Ohio")
+
+northeast_ideation <- filter(ideation, state== "Connecticut" | state== "Maine" | state== "Massachusetts" | state== "New Hampshire" | state== "New Jersey" | state== "New York" | state== "Pennsylvania" | state== "Rhode Island" | state== "Vermont" | state== "District of Colombia")
+
+pacific_northwest_ideation <- filter(ideation, state== "Washington" | state== "Oregon" | state== "California")
+
+west_ideation <- filter(ideation, state== "Montana" | state== "Wyoming" | state== "Nevada" | state== "Utah" | state== "Idaho")
+
+southwest_ideation <- filter(ideation, state== "Arizona" | state== "Colorado" | state== "New Mexico" | state== "Oklahoma" | state== "Texas" )
+
+south_ideation <- filter(ideation, state== "Arkansas" | state== "Louisiana" | state== "Kentucky" | state== "Tennessee" | state== "Mississippi" | state== "Alabama" | state== "Maryland" | state== "West Virginia" | state== "Virginia" | state== "Delaware" | state== "North Carolina"| state== "South Carolina" | state== "Florida")
+
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# midwest mean(ideation_prevalence): 4.43
+
+# northeast mean(ideation_prevalence): 4.33
+
+# pacific_northwest mean(ideation_prevalence): 4.76
+
+# west_ideation mean(ideation_prevalence): 5.10
+
+# southwest mean(ideation_prevalence): 4.25
+
+# south mean(ideation_prevalence): 4.25
+
+region <- c("midwest", "NE", "pacific_NW", "west", "southwest", "south")
+ideation_by_region <- c(4.43, 4.33, 4.76, 5.10, 4.25, 4.25)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ideationregion.tbl <-  tibble(
+  region = region,
+  ideation_by_region = ideation_by_region)
+```
+
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Poverty
+midwest_poverty <- filter(poverty_census, state== "Iowa" | state== "Michigan" | state== "Minnesota" | state== "North Dakota" | state== "South Dakota" | state== "Wisconsin" | state== "Kansas" | state== "Nebraska" | state== "Missouri" | state== "Illinois" | state== "Indiana" | state== "Ohio")
+
+northeast_poverty <- filter(poverty_census, state== "Connecticut" | state== "Maine" | state== "Massachusetts" | state== "New Hampshire" | state== "New Jersey" | state== "New York" | state== "Pennsylvania" | state== "Rhode Island" | state== "Vermont" | state== "District of Colombia")
+
+pacific_northwest_poverty <- filter(poverty_census, state== "Washington" | state== "Oregon" | state== "California")
+
+west_poverty <- filter(poverty_census, state== "Montana" | state== "Wyoming" | state== "Nevada" | state== "Utah" | state== "Idaho")
+
+southwest_poverty <- filter(poverty_census, state== "Arizona" | state== "Colorado" | state== "New Mexico" | state== "Oklahoma" | state== "Texas" )
+
+south_poverty <- filter(poverty_census, state== "Arkansas" | state== "Louisiana" | state== "Kentucky" | state== "Tennessee" | state== "Mississippi" | state== "Alabama" | state== "Maryland" | state== "West Virginia" | state== "Virginia" | state== "Delaware" | state== "North Carolina"| state== "South Carolina" | state== "Florida")
+
+
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# midwest mean(poverty_rate): 11.1
+
+# northeast mean(poverty_rate): 10.5
+
+# pacific_northwest mean(poverty_rate): 11.5
+
+# west  mean(poverty_rate): 11.3
+
+# southwest mean(poverty_rate): 13.6
+
+# south mean(poverty_rate): 14.0
+
+region <- c("midwest", "NE", "pacific_NW", "west", "southwest", "south")
+poverty_by_region <- c(11.1, 10.5, 11.5, 11.3, 13.6, 14.0)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+povertyregion.tbl <-  tibble(
+  region = region,
+  poverty_by_region = poverty_by_region)
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height= 4, fig.width= 6}
+
+# AMI by region barplot
+AMIregion.tbl %>%
+ggplot(aes(x=region,y=AMI_by_region)) +
+  geom_bar(stat="identity", fill="darkslategray")+
+  labs(title = "Mental Illness Prevalence by Region",
+       x= "Geographical Region in the US",
+       y= "% of Citizens Diagnosed with a Mental Illness")
+
+
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height= 4, fig.width= 6}
+# ideation and region barplot
+ideationregion.tbl %>%
+ggplot(aes(x=region,y=ideation_by_region)) +
+  geom_bar(stat="identity", fill="darkseagreen4")+
+  labs(title = "Adult Suicidal Thoughts by Region",
+       x= "Geographical Region in the US",
+       y= "% adults with serious thoughts of suicide")
+
+# poverty and region barplot
+povertyregion.tbl %>%
+ggplot(aes(x=region,y=poverty_by_region)) +
+  geom_bar(stat="identity", fill="darkseagreen")+
+  labs(title = "Poverty Rate by Region",
+       x= "Geographical Region in the US",
+       y= "% of Citizens in Poverty")
+
+```
+
+
+
+
+# Sunshine
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height= 4, fig.width= 6}
+ggplot(data=sun_AMI,aes(x=percent_sun, y= AMI_prevalence))+
+  geom_point(color="#00798c")+
+  geom_smooth(method = "lm", se= FALSE, color="#00798c")+
+  labs(title = "Sunny Days, Prevalence of Mental Illness", 
+       x= "% of Sunny Days by State",
+       y= "% of Citizens with Mental Illness")
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+sunAMImodel = lm(AMI_prevalence ~ percent_sun, data= sun_AMI)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+sunAMIkable <- broom::tidy(sunAMImodel)
+
+knitr::kable(sunAMIkable)
+```
+
+With each one unit increase in percentage of sunny days, a state has an increase of --- in percentage of citizens with a diagnosed psychological disorder. The p-value of --- means that this is not a statistically significant relationship. This makes since because we did not expect a strong relationship between sunshine and all mental illnesses, just depression.
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height= 4, fig.width= 6}
+ggplot(data=sun_depression, aes(x=percent_sun, y= depression_rate))+
+  geom_point(color="#00798c")+
+  geom_smooth(method= "lm", se= FALSE, color="#00798c")+
+  labs(title = "Sunny Days and Depression Prevalence", 
+       x= "% of Sunny Days by State",
+       y= "% of adults with depression")
+```
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+sundepressionmodel = lm( depression_rate ~ percent_sun, data = sun_depression)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+sundepressionkable <- broom::tidy(sundepressionmodel)
+knitr::kable(sundepressionkable)
+```
+
+
+We found a statistically significant relationship between percent of days that are sunny and depression prevalence in a state. As pecentage of sunny days increases by 1 percent, we expect to see a decrease of .03 percent in the percent of adults diagnosed with depression.
+ 
+
+
+
+It makes sense that sunny days has a significant negative relationship with depressive episodes, but not with mental illnesses as a whole. Sunshine has only been found to affect depression (MDD with seasonal pattern, aka Seasonal Affective Disorder). However, all mental illnesses do not have this relationship with sunlight.
+
+
+
+
+# Poverty Rate
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height= 4, fig.width= 6}
+ggplot(data=poverty_AMI, aes(x=poverty_rate, y= AMI_prevalence))+
+  geom_point(color="#2e4057")+
+  geom_smooth(method="lm", se=FALSE, color="#2e4057")+
+  labs(title = "Poverty Rate and Mental Illness",
+       x= "Poverty Rate",
+       y= "% of Citizens with a Mental Illness")
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+poverty_AMI_model = lm(AMI_prevalence ~ poverty_rate, data = poverty_AMI)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+povertyAMIkable <- broom::tidy(poverty_AMI_model)
+knitr::kable(povertyAMIkable)
+```
+
+
+
+
+```{r, echo=FALSE}
+poverty_depression<- poverty_census %>% 
+  inner_join(state_depression, by="state")
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height= 4, fig.width= 6}
+ggplot(data=poverty_depression, aes(x=poverty_rate, y= depression_rate))+
+  geom_point(color="#2e4057")+
+  geom_smooth(method="lm", se=FALSE, color="#2e4057")+
+  labs(title = "Poverty Rate and Depression",
+       x= "Poverty Rate",
+       y= "% of Citizens with Depression")
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+poverty_depression_model = lm(depression_rate ~ poverty_rate, data = poverty_depression)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+povertydepressionkable <- broom::tidy(poverty_depression_model)
+knitr::kable(povertydepressionkable)
+```
+
+
+
+
+
+
+Poverty rate does not seem to have a significant influence on either depression or all mental illnesses. There is a slight decrease with poverty and depression; our first theory was that this relationship could be due to poor communities simply not having as many people diagnosing mental disorders. 
+
+
+
+
+
+
+
+# Mental Health Workforce
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height= 4, fig.width= 6}
+ggplot(data=resources, aes(x=ratio, y= AMI_prevalence))+
+  geom_point(color="#66a182")+
+  geom_smooth(method= "lm", se=FALSE, color="#66a182")+
+  labs(title = "Workers and Prevalence of Mental Illness", 
+       x= "Ratio of Mental Health Workers to Citizens",
+       y= "% of Citizens with a Mental Illness")
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+resourcemodel = lm(AMI_prevalence ~ ratio, data = resources)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+resourcekable <- broom::tidy(resourcemodel)
+knitr::kable(resourcekable)
+```
+ 
+
+
+```{r, echo=FALSE}
+workforce_depression<- workforce %>% 
+  inner_join(state_depression, by="state")
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height= 4, fig.width= 6}
+ggplot(data=workforce_depression, aes(x=ratio, y= depression_rate))+
+  geom_point(color="#66a182")+
+  geom_smooth(method= "lm", se=FALSE, color="#66a182")+
+  labs(title = "Workers and Prevalence of Depression", 
+       x= "Ratio of Mental Health Workers to Citizens",
+       y= "% of Citizens with Depression")
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+workforce_depressionmodel = lm(depression_rate ~ ratio, data = workforce_depression)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+workforce_depressionkable <- broom::tidy(workforce_depressionmodel)
+knitr::kable(workforce_depressionkable)
+```
+
+We expected that as workforce availability decreased, there would be a higher prevalence of mental illness and depression. However, we found that when there is one mental health care provider per *300* citizens in a state, we see a higher percentage of mental illness prevalence than in states with one health care provider per *800* citizens. One reason for this could be that we have purposefuly placed more mental health resources in states with a higher prevalence of mental illness. In other words, we could colclude from this trend that we have our mental health resources where they are needed most. However, this relationship is not significant for either any mental illness or depression alone.
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+state.geo = read_csv("statelatlong.csv")
+
+state_geo <- 
+  as_tibble(state.geo) %>% 
+  select(Latitude, Longitude, City) %>% 
+  rename(state = City)
+
+depression_geo<- state_depression %>% 
+  inner_join(state_geo, by="state")
+
+# combine state name and depression rate in a new column
+
+depression_geo <- depression_geo %>% 
+  mutate(state_and_rate = paste(depression_geo$state,",",depression_geo$depression_rate)) %>% 
+  filter(state != "Alaska") %>% 
+  filter(state != "Hawaii")  
+```
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# combine all variables into a tibble
+model1<- mental_illness %>% 
+  inner_join(ideation, by="state")
+model2<- model1 %>% 
+  inner_join(youthMDE, by="state")
+model3<- model2 %>% 
+  inner_join(workforce, by="state")
+model4<- model3 %>% 
+  inner_join(sunstates, by="state")
+model5<- model4 %>% 
+  inner_join(poverty_census, by="state")
+model6<- model5 %>% 
+  inner_join(state_depression, by="state")
+```
+
+
+## A Look at Individual States
+Hover over a state to see its reported depression prevalence.
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=9, fig.height=7}
+
+library(plotly)
+g <- list(
+  scope = 'usa',
+  projection = list(type = 'albers usa'),
+  showland = TRUE,
+  landcolor = toRGB("gray95"),
+  subunitcolor = toRGB("gray85"),
+  countrycolor = toRGB("gray85"),
+  countrywidth = 0.5,
+  subunitwidth = 0.5
+)
+
+plot_geo(depression_geo, lat = ~Latitude, lon = ~Longitude) %>% 
+  add_markers(
+    text = ~state_and_rate,
+    color = ~depression_rate, hoverinfo = "text") %>% 
+  layout(title= "State Depression Prevalence", geo= g)
+```
+
+
+# Interactive Map of Depression Prevalence
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(viridis)
+# Gradient color
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+all_data <- state_geo %>% 
+  inner_join(model6, by= "state") %>% 
+  filter(state != "Alaska") %>% 
+  filter(state != "Hawaii")
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+inputPanel(
+  selectInput("depression_rate", label = "Depression Prevalence:",
+              choices = c(2,3,4,5,6,7), selected = 2),
+  sliderInput("Latitude", label= "Latitude:",
+              min = 20, max = 50, value = 20, step = 5),
+  selectInput("percent_sun", label= "Percent Sunny Days:",
+              choices= c(40, 50, 60, 70), selected = 40), 
+  sliderInput("poverty_rate", label= "Poverty Rate:",
+              min = 7, max = 19, value = 7, step = 2),
+  sliderInput("ratio", label= "Mental Health Workforce Ratio:",
+              min = 100, max = 1000, value = 100, step = 100)
+  )
+
+renderPlot({
+    all_data %>%
+    filter (depression_rate > input$depression_rate &
+              Latitude > input$Latitude &
+              percent_sun > input$percent_sun &
+              poverty_rate > input$poverty_rate &
+              ratio > input$ratio) %>%
+    ggplot(aes(Longitude, Latitude)) +
+      borders("state") +
+      geom_point(size=3,aes(color = depression_rate)) +
+    scale_color_steps(low="midnightblue", high="slategray1")+
+    coord_quickmap()
+})
+```
+
+
+
+
+# Data Acquisition and Wrangling
+
+Many of our variables were in a form that needed to be changed. Our methods of acquiring data included using Selector Gadget, selecting all tables from a website, and importing CSVs. Some of our data wrangling techniques were filter(), select(), rename(), mutate(), and inner_join. 
+
+
+# New R Tricks
+We used **broom** to put all of our model coefficients into a tibble, and then we used **kable** to display this tibble as a neat table in our shiny app:
+
+```{r, eval=FALSE, message=FALSE, warning=FALSE}
+workforce_depressionmodel = lm(depression_rate ~ ratio, data = workforce_depression)
+workforce_depressionkable <- broom::tidy(workforce_depressionmodel)
+knitr::kable(workforce_depressionkable)
+```
+
+In order to get our map to display the state name and depression rate when the cursor hovered over it, we first combined this information into one column and then displayed it with the **add_markers** feature:
+```{r,  eval=FALSE, message=FALSE, warning=FALSE}
+# combine state name and depression rate in a new column
+
+depression_geo <- depression_geo %>% 
+  mutate(state_and_rate = paste(depression_geo$state,",",depression_geo$depression_rate))
+
+# display state and rate when cursor hovers over a state 
+plot_geo(depression_geo, lat = ~Latitude, lon = ~Longitude) %>% 
+  add_markers(
+    text = ~state_and_rate,
+    color = ~depression_rate, hoverinfo = "text")
+```
+
+
+
+
+
+
+
+
+
+# Works Cited
+
+“Average Annual Sunshine by USA State - Current Results.” Currentresults.Com, 2020, www.currentresults.com/Weather/US/average-annual-state-sunshine.php. Accessed 6 Nov. 2020. 
+
+
+“Concatenate Two Columns of Dataframe in R - DataScience Made Simple.” DataScience Made Simple, 29 June 2020, www.datasciencemadesimple.com/concatenate-two-columns-of-dataframe-in-r-2/. Accessed 18 Nov. 2020.
+
+
+“Poverty Declined in Most States in 2017.” Economic Policy Institute, 2017, www.epi.org/blog/poverty-declines-in- most-states-in-2017/. Accessed 6 Nov. 2020.
+
+
+“Scatter Plots on Maps.” Plotly.com, 2011, plotly.com/r/scatter-plots-on-maps/. Accessed 18 Nov. 2020.
+
+
+“The Viridis Palette for R.” Thinking on Data, 2014, www.thinkingondata.com/something-about-viridis-library/#:~:text=The%20viridis%20palette%20was%20initially,Matplotlib%20included%20in%20matplotlib%201.5. Accessed 18 Nov. 2020.
+
+
+US Census Bureau. “Historical Poverty Tables: People and Families - 1959 to 2019. Table 19. Percent of Persons in Poverty by State ” The United States Census Bureau, 2 Sept. 2020, www.census.gov/data/tables/time-series/demo/income-poverty/historical-poverty-people.html. Accessed 7 Nov. 2020.
+
+
+“2020 View All Data.” Mental Health America, 2020, www.mhanational.org/issues/2020/mental-health-america-all-data. Accessed 6 Nov. 2020.
