@@ -1,0 +1,728 @@
+---
+title: "Final Report: Is Greenwashing Being Used to Take Advantage of Green Consumers?"
+subtitle: Catie Rhodes and Nate Trasowech
+output:
+  pdf_document:
+    fig_height: 3
+    fig_width: 4.5
+  html_document: default
+editor_options: 
+  chunk_output_type: console
+---
+```{r, include=FALSE}
+# Load R packages we'll use in this R markdown file
+library(mosaic)      # mosaic has favstats, a good summary tool.
+library(infer)       # we use infer for randomization tests.
+library(readr)
+library(leaps)       # for best subsets methods
+library(glmnet)      # for lasso and ridge regression
+library(miscset)     #for lapply
+library(sjPlot)      # for table of model coefficients
+library(sjmisc)
+library(sjlabelled)
+library(broom)       # for table of model coefficients
+library(tidyverse)   # ALWAYS load last
+```
+
+
+```{r, include=FALSE}
+CO2_Emissions_Canada <- read_csv("~/Stats 272 F20/Project/Catie and Nate/CO2 Emissions_Canada.csv")
+
+data("CO2_Emissions_Canada")
+CO2_Emissions<- as_tibble(CO2_Emissions_Canada)
+```
+
+
+```{r, echo=FALSE} 
+#changing variable names
+
+CO2_Emissions <- rename(CO2_Emissions, CO2 = "CO2 Emissions(g/km)", Vehicle_Class = "Vehicle Class", Engine_Size = "Engine Size(L)", Fuel_Type = "Fuel Type", mpg = "Fuel Consumption Comb (mpg)")
+
+# selecting variables
+Emissions <- CO2_Emissions %>% 
+  select(CO2, Make, Vehicle_Class, Engine_Size, Cylinders, Transmission, Fuel_Type, mpg) %>% 
+  filter(Fuel_Type != "N") %>% 
+  filter(Make== "FORD"| Make== "CHEVROLET" | Make=="HONDA" | Make=="MERCEDES-BENZ" | Make=="TOYOTA") %>% 
+  filter(Vehicle_Class == "SUV - SMALL" | Vehicle_Class == "SUV - STANDARD" | Vehicle_Class == "COMPACT" | Vehicle_Class == "PICKUP TRUCK - STANDARD" | Vehicle_Class == "SUBCOMPACT") %>% 
+  filter(Transmission == "A6" | Transmission == "AS6" | Transmission == "AS8" | Transmission == "M6" | Transmission == "A9" | Transmission == "A8" | Transmission == "AS7" | Transmission == "AS10" | Transmission == "AM7" | Transmission == "M5")
+  
+
+
+#numeric version of transmission: number signifies number of gears/speeds.
+
+Emissions <- Emissions %>% 
+  mutate(gears = parse_number(Transmission))
+
+```
+
+
+```{r, include=FALSE}
+# centering continuous variables by median: Median :3.500   Median : 6.000   Median : 6.00
+Emissions <- Emissions %>% 
+  mutate(centered_Engine_Size= Engine_Size-3.5 )
+
+Emissions <- Emissions %>% 
+  mutate(centered_Cylinders= Cylinders - 6)
+  
+Emissions <- Emissions %>% 
+  mutate(centered_gears= gears - 6)
+```
+
+## Introduction
+
+Climate change is a pressing issue for our generation and, more significantly, for the generations that will experience the consequences of our actions – or lack thereof. In 2019, the global mean temperature was estimated to be 1.28 °C (2.31 °F) above the average temperature of the late 19th century, granting it the title of the second warmest year on earth since 1850 (the warmest being 2016) (Daziano et al.). At the current rate of progression, the increase in Earth’s long-term average temperature will reach 1.5 °C (2.7 °F) above the 1850-1900 average by around 2035 and 2 °C (3.6 °F) will be reached around 2065 (Daziano et al.). The increasing abundance of greenhouse gases (GHGs) in the atmosphere due to human activities is the direct cause of this global warming (Daziano et al.). As this issue becomes increasingly central to our responsibilities as citizens of our country and our planet, we ask ourselves: what can be done? 
+
+A 2016 report from the United States Environmental Protection Agency (EPA) states that transportation is responsible for the second-highest levels of GHG emission in the country,  with light-duty vehicles (i.e. passenger cars) as the highest contributors (Shukor et al.). Thus, when looking for a place to make a difference, driving greener vehicles seems like a good place to start. That being said, how does one know if “green” cars on the market are actually environmentally friendly? A 2010 TerraChoice Report revealed over four consecutive years, from 2007 to 2010, that 95 percent of products that claimed to be environmentally friendly were actually engaging in greenwashing (Shukor et al.). Greenwashing is the incorrect portrayal of information or assertion that a product is environmentally friendly or “green” when it is actually not green at all (Shukor et al.). Motivated by the Eco-friendly consumer and a drive for profit, coupled with the fact that transportation is the second-largest producer of GHGs in the country, the automotive industry is ripe for engaging in greenwashing practices. 
+
+Our report looks to model CO2 emissions across a variety of automobiles and compare emission levels to an EU standard of 120 g/km for environmentally friendly cars (Shukor et al.). 
+In doing so, we plan to identify which factors are most indicative of CO2 emission levels and discover just how prevalent greenwashing is within the automobile industry. We expect the most environmentally friendly cars to be small with an engine composition that reflects their size, but we are skeptical as to whether even these cars will meet EU standards for green vehicles.
+
+
+## Materials and Methods
+
+Our initial data set consisted of 7385 cars that were recorded by the Canadian government in order to establish fuel consumption ratings. Individual vehicles served as the observational units, and each car was evaluated on the following qualities: make (brand of the car), model, vehicle class (SUV, Compact, Truck, etc.), engine size (Liters), number of cylinders, transmission type (with number of gears), fuel type (X = Regular gasoline, Z = Premium gasoline, D = Diesel, E = Ethanol (E85), N = Natural Gas), fuel consumption in city roads (L/100 km), Fuel consumption in highways (L/100 km), combined fuel consumption - 55% city, 45% highway- (L/100 km), combined fuel consumption in miles per gallon (mpg), and finally, the tailpipe emissions of carbon dioxide (in grams per kilometer) for combined city and highway driving. Further information on these can be found in the appendix under Variable Table and Variable Definitions.
+
+Due to a copious amount of data with a multitude of levels for many of our variables, we ended up filtering out a large portion of the original data set. We got rid of all of the L/100 km variables and mpg as they all failed our LINE assumptions tests. The results of these tests can be found in our appendix under mpg and  LINE Assumptions for L/100 km Variables. Because there were so many different models of cars observed, we decided not to include car Model as a variable, and are instead solely relying on Make to identify cars. Additionally, we selected only cars of the top 5 makes: Honda, Toyota, Chevrolet, Ford, and Mercedes-Benz. This eliminated many cars, which inevitably will have an effect on the data. However, we believe that 5 separate Makes still offers an adequate number of companies to analyze while allowing us to consolidate our data. We selected the top 4 vehicle classes: SUV small, SUV standard, compact, pickup truck standard, as well as subcompact. Subcompact was not one of the top vehicle classes, but we included it as they are often praised for their environmental friendliness. Moreover, we eliminated Transmission types with less than 50 observations as we felt we would not have sufficient data for those types to draw any meaningful conclusions. In addition, we made this variable numeric: Transmission types were defined by the number of transmission gears, so we made a new variable called "gears" in order to show this variable in a simplified manner. We also eliminated fuel type N (Natural Gas), as there was only one observation with this fuel type. Finally, we centered our continuous variables (gears, cylinders, and engine size) by their medians in order to offer a more meaningful Intercept coefficient in our final model.
+
+In summary, our initial data set contained 7385 observations and 12 variables, whereas our filtered data set contains 1195 observations and 8 variables. The majority of lost observations were due to filtering down to the top 5 Makes, which resulted in an elimination of 3393 observations. The rest of our lost data were due to filtering out observations with a fuel type, vehicle class, or transmission type that had low enough numbers of occurrence that we felt we did not have sufficient data to adequately analyze such variable observations. That being said, filtering out such a large portion of our original data set could possibly create holes in our data of which we are unaware. Filtering Make to such an extent could have led to a lack of data in other variable observations that would have been better predictors of CO2 emissions. Additionally, by filtering out additional observations based on fuel type, vehicle class, and transmission, we’re reducing the amount of data we have for Make which could skew analyses of CO2 emissions based on Make. Regardless, our initial data set was much too large, and committing to reducing our observations based on carefully chosen filtering allows for a clearer, more thorough analysis of the data we have left. 
+
+We began our EDA by finding summary statistics for our response variable (CO2) as well as for all of our quantitative explanatory variables (Engine Size, Gears, Cylinders). We also plotted all these variables using histograms to visualize the distribution of their data and see if any of them were skewed. For our categorical predictors (Vehicle Class, Make, Fuel Type), we created bar graphs that measured count and proportion. We then went on to measure correlation levels between CO2 and our individual quantitative explanatory variables, using box plots and coded scatter plots to measure their relationships.
+
+To create our initial model, we took the information we gathered from our EDA and performed a stepwise regression testing all of our variables. The stepwise output showed that every variable should be included in our initial model, meaning that each offered a significant improvement to the model. After finding our initial model, we performed stepwise regression again, this time using our initial model as our base model and a model with all of our predictors and all possible interactions as our end model. This yielded a model that left us with roughly half of the possible interactions, citing those left as statistically significant. However, after testing this model against models with reduced interaction terms using nested F-tests, we found that after including our strongest interaction term, the differences in residual deviance when adding further interactions was not largely beneficial to the final model. Thus, in the interest of model interpret ability, we decided our final model would include the interaction term that was the most statistically significant, Make:gears, which was determined using nested F-tests.  
+
+
+## Results
+
+To better understand out dataset prior to conducting our statistical analyses, we looked at the summary statistics of CO2, which can be seen below.
+
+```{r, echo=FALSE}
+
+mod1 <- summary(Emissions$CO2)
+
+mod <- broom::tidy(mod1)
+
+knitr::kable(mod)
+
+```
+
+From these statistics, we see that average CO2 emission levels were at 266.78 g/km, which is over double the EU standard of 120 g/km for green vehicles, and that our minimum is 128 g/km, which is also over the EU standard. As such, before any further analysis, we already know that every car in our data set does not meet EU CO2 emissions standards for green vehicles.
+
+Continuing with our analysis, we performed stepwise regression to yield the following model:
+
+```{r, echo=FALSE}
+final_model = lm(formula = CO2 ~ centered_Engine_Size + Vehicle_Class + Make + Fuel_Type + centered_gears + centered_Cylinders + Make:centered_gears, data = Emissions)
+
+final_model_tibble <- broom::tidy(final_model)
+
+knitr::kable(final_model_tibble)
+
+```
+
+Through this model, we can better understand which factors are most pertinent to lowering CO2 emission levels in a car. Looking at our model's intercept, we see that CO2 emissions are 229.11 g/km for a compact Chevrolet with 6 transmission gears, an engine size of 3.5 liters, and 6 cylinders using diesel fuel. This intercept serves as a baseline for analyzing the rest of our data as it measures our median centered quantitative variables with reference levels for our categorical variables. Understanding engine size, we see that with each increase of one liter in the engine size of a vehicle, we would expect an increase of 24.5 g/km of CO2 emissions (for a Chevrolet with 6 cylinders, 6 transmission gears, and diesel fuel). This means that smaller engines lead to lowered CO2 emission, which is in direct contrast with common automotive marketing, which posits that 8+ Liter engines have greater fuel economy. Based on our established understanding of greenwashing, this discrepancy could very possibly be due to the dissemination of false information by automotive companies in the hopes of increasing profits. 
+
+In our initial data wrangling, we specifically included subcompact vehicles in our data set as they are often praised for their environmental friendliness. However, we see in our model that subcompact Chevrolet are expected to emit 9.75 more g/km of CO2 than compact Chevrolets with 6 transmission gears, an engine size of 3.5 liters, and 6 cylinders using diesel fuel. Again, such increased emissions for a subcompact car is surprising given the marketing claims that subcompact cars are some of the most fuel efficient and Eco-friendly cars on the market. We see this claim more easily refuted in Figure 2, which models CO2 emissions by vehicle class. 
+
+```{r, echo=FALSE, fig.width=6}
+ggplot(data = Emissions, aes(y = CO2, x = Vehicle_Class)) + 
+  geom_boxplot()+
+   coord_flip() +
+  labs(title = "CO2 Emissions by Vehicle Class",
+       caption = "Figure 2")
+```
+
+That being said, subcompact cars are still doing much better than standard SUVs, as our model shows that Standard SUV Chevrolets are expected to emit 52.2 more g/km of CO2 than compact Chevrolets with 6 transmission gears, an engine size of 3.5 liters, and 6 cylinders using diesel fuel. This is a far larger increase than we found with subcompact cars; standard SUVs fared the worst out of all vehicle classes in terms of having the largest increase in emissions compared to compact vehicles.
+
+
+Looking at fuel type, we see that fuel type E has the greatest negative impact on CO2 emissions out of all the fuel types. Ethanol is associated with a 26.8 g/km decrease in CO2 emissions when compared to a Compact Chevrolets with 6 transmission gears, an engine size of 3.5 liters, and 6 cylinders that uses diesel instead of Ethanol. 
+
+As the number of cylinders increases by one, CO2 emissions increase by 4.13 g/km for a compact Chevrolet with 6 transmission gears, and an engine size of 3.5 liters using diesel fuel. For gears we see that with each one unit increase, CO2 emissions decrease by 1.44 g/km for a compact Chevrolet with an engine size of 3.5 liters and 6 cylinders using diesel fuel. 
+
+
+When considering the make of a car, we see that Hondas have less CO2 emissions than Chevrolets while Toyotas have more. Specifically, Compact Hondas are expected to emit 3.1 less g/km of CO2 than compact Chevrolets with 6 transmission gears, an engine size of 3.5 liters, and 6 cylinders using diesel fuel.
+Compact Toyotas are expected to emit 7.76 more g/km of CO2 than compact Chevrolets with 6 transmission gears, an engine size of 3.5 liters, and 6 cylinders using diesel fuel. That being said, when accounting for the interaction between make and gears, we see a different relationship. The interactions between Mercedes-Benz:gears and Toyota:gears are both statistically significant (p = .037, p = .0000001). For Ford, Honda, and Mercedes-Benz, we see that an increase in gears corresponds to an increase in CO2 emissions when compared to Cheverolet. However, an increase in gears for Toyota leads to a decrease in CO2 emissions when compared to Cheverolet. Looking at Toyota and Honda specifically, we see that a Compact car with 6 transmission gears, an engine size of 3.5 liters, and 6 cylinders that uses diesel is predicted to have CO2 emissions of 252.11 g/km for a Toyota and 352.42 for a Honda.
+
+
+## Discussion
+
+Our overarching findings show that the vast majority of cars within North America do not meet EU standards for green vehicles, with every single car in our data set failing to have CO2 emissions at or below 120 g/km. This is rather concerning, but it is especially jarring considering the vehicle classes that are widely considered to be environmentally friendly, specifically Subcompact cars, were shown to have CO2 emission levels well above green vehicle levels. As such, it appears that greenwashing is widespread and largely unchecked within North America. As such, our analyses can be better understood as looking at what factors should be sought after, and what factors should be avoided when considering CO2 emission levels in cars.
+
+After our analysis, we can offer a short guide to an environmentally conscious consumer.
+A customer should look for a compact car with a small engine size (ideally 1 liter), preferably a Honda or Toyota. In addition, a small number of cylinders suggests that a vehicle has fewer CO2 emissions; one should look for a vehicle with 3 cylinders.
+The Eco-friendly customer need not worry about the number of transmission gears when buying a Ford or Honda, but a Mercedes Benz increases significantly in emissions with an increase in gears. Toyotas, on the other hand, show a very significant (p-value of .0000001) negative interaction with gears; thus, when considering a Toyota, an increase in gears is likely to correspond with a decrease in CO2 emissions.
+
+All of this being said, it is also worth noting the limitations of our study. First and foremost, our final data set used for analyses only contained 1195 observations. Thus, the scope of generalizability for our results is rather limited, simply due to our small sample size. Furthermore, our standard for measuring green vehicle CO2 emissions levels is from the EU. This standard was used as an ideal understanding of CO2 emissions levels for vehicles, but it should be recognized that standards within North America differ. Finally, our data is from an observational study. This means that cars were not randomly assigned to have certain characteristics like fuel type or number of cylinders. Because of this, we can not make a definitive conclusion of causation.
+
+Our analysis confirms our prediction about the relationship between all of our predictors and carbon dioxide emissions except for engine size. These conclusions follow the studies that have been conducted on this topic.
+
+We were surprised to find several patterns in the data that contradict the common understanding of what characteristics are associated with an Eco-friendly vehicle. Specifically, it was unexpected that a subcompact car has greater Co2 emissions than a compact car and that engine size is associated with a large increase in emissions. These findings suggest that an environmentally conscious consumer must be critical of claims to Eco-friendliness in the automotive industry, and should instead conduct their own research when looking to buy a car. 
+
+
+## Appendix
+
+### Variable Table
++---------------+---------------+--------------------+---------+---------+
+| Variable      | Variable Role | Type of Variable   | Values  | Units   |
++===============+===============+====================+=========+=========+
+| CO2 Emissions | response      | quantitative       | 96-522  | g/km    |
+|               |               |                    |         |         |
++---------------+---------------+--------------------+---------+---------+
+| Make          | explanatory   | categorical        |Acura,   |         |
+|               |               |                    |Audi, etc|         |
++---------------+---------------+--------------------+---------+---------+
+| Vehicle Class | explanatory   | categorical        |Compact, |         |
+|               |               |                    |SUV, etc |         |
++---------------+---------------+--------------------+---------+---------+
+| Engine Size   | explanatory   | quantitative       | 0.9-8.4 |Liters   |
+|               |               |                    |         |         |
++---------------+---------------+--------------------+---------+---------+
+| Cylinders     | explanatory   | quantitative       | 4-12    |Num. of  |
+|               |               |                    |         |cylinders|
++---------------+---------------+--------------------+---------+---------+
+| Gears         | explanatory   | quantitative       | 5-10    | Num. of |
+|               |               |                    |         |  gears  |
++---------------+---------------+--------------------+---------+---------+
+| Fuel Type     | explanatory   | categorical        |  A-Z    |         |
+|               |               |                    |         |         |
++---------------+---------------+--------------------+---------+---------+
+| Combined Fuel | explanatory   | quantitative       | 11-69   | mpg     |
+| Consumption   |               |                    |         |         |
++---------------+---------------+--------------------+---------+---------+
+
+
+
+**Variable Definitions:** 
+CO2 emissions: The tailpipe emissions of carbon dioxide (in grams per kilometer) for combined city and highway driving
+Fuel type: X = Regular gasoline, Z = Premium gasoline, D = Diesel, E = Ethanol (E85), N = Natural gas
+Fuel Consumption: City and highway fuel consumption ratings are shown in liters per 100 kilometers - the combined rating (55% city, 45% hwy) is shown in L/100 km and in miles per gallon (mpg)
+Model: 4WD/4X4 = Four-wheel drive, AWD = All-wheel drive, FFV = Flexible-fuel vehicle, SWB = Short wheelbase, LWB = Long wheelbase, EWB = Extended wheelbase
+Transmission: A = Automatic, AM = Automated manual, AS = Automatic with select shift, AV = Continuously variable, M = Manual. 3 - 10 = Number of gears/ number of speeds.
+
+### CO2
+
+Out of the cars in this sample, the average CO2 emissions in g/km is 262.8. Figure one depicts the distribution of CO2 emissions within our data set.
+```{r, echo = FALSE}
+Emissions %>% 
+ggplot(mapping = aes(CO2)) +
+  geom_histogram(binwidth = 5) +
+  labs(title = "Histogram of CO2 Emissions", 
+       caption = "Figure 1")
+```
+
+
+## Predictors
+
+### Make
+```{r, echo=FALSE}
+model1 = lm(CO2 ~ Make, data = Emissions)
+par(mfrow = c(2, 2), mar = c(2, 2, 2, 2)) 
+plot(model1, which = c(1, 2, 3, 5))
+par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
+```
+
+```{r, echo=FALSE, fig.height=2, fig.width=6}
+ggplot(data = Emissions ) + 
+  geom_bar(mapping = aes(x = Make, y = stat(prop), group = 1))+
+  coord_flip() +
+  labs(title = "Figure 1.1: Proportions for Make")
+```
+
+```{r, include=FALSE, fig.height=2, fig.width=3}
+ggplot(data = Emissions ) + 
+  geom_bar(mapping = aes(x = Make))+
+  coord_flip() +
+  labs(title = "Make by Count")
+```
+
+### Vehicle Class
+```{r, include=FALSE}
+model2 = lm(CO2 ~ Vehicle_Class, data = Emissions)
+par(mfrow = c(2, 2), mar = c(2, 2, 2, 2)) 
+plot(model2, which = c(1, 2, 3, 5))
+par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
+```
+
+```{r, echo=FALSE, fig.height=2, fig.width=9}
+ggplot(data = Emissions ) + 
+  geom_bar(mapping = aes(x = Vehicle_Class, y = stat(prop), group = 1))+
+  coord_flip() +
+  labs(title = "Figure 1.2: Proportions for Vehicle Class")
+```
+
+
+### Engine Size
+
+```{r, echo=FALSE}
+model3 = lm(CO2 ~ Engine_Size, data = Emissions)
+par(mfrow = c(2, 2), mar = c(2, 2, 2, 2)) 
+plot(model3, which = c(1, 2, 3, 5))
+par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
+```
+
+### Cylinders
+
+Figure 4 reflects the relationship between CO2 emissions and cylinders. It appears LINE conditions were met, and the graph shows a strong positive linear relationship with CO2 emissions. 
+
+```{r, echo=FALSE, message=FALSE}
+
+#Plot for CO2 by Cylinders
+Emissions %>% 
+  ggplot(mapping = aes(x = Cylinders, y = CO2)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(title = "CO2 Emissions by Cylinders",
+       caption = "Figure 4")
+
+```
+
+```{r, echo=FALSE}
+ggplot(data = Emissions, aes(y = CO2, x = Cylinders)) + 
+  geom_point() +
+  geom_abline(intercept = 286.7099, slope = 7.19, 
+              linetype = 1, color = "red") +    # Solid line, mpg at 25th
+  geom_abline(intercept = 273.4299, slope = -2.89,
+              linetype = 2, color = "blue")     # Dashed line, mpg at 75th
+```
+
+```{r, include=FALSE}
+model4 = lm(CO2 ~ Cylinders, data = Emissions)
+par(mfrow = c(2, 2), mar = c(2, 2, 2, 2)) 
+plot(model4, which = c(1, 2, 3, 5))
+par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
+```
+
+### Gears
+
+```{r, include=FALSE}
+model5 = lm(CO2 ~ gears, data = Emissions)
+par(mfrow = c(2, 2), mar = c(2, 2, 2, 2)) 
+plot(model5, which = c(1, 2, 3, 5))
+par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
+```
+
+```{r, echo=FALSE, fig.height=2, fig.width=3}
+ggplot(data = Emissions) + 
+  geom_bar(mapping = aes(x = gears, y = stat(prop), group = 1))+
+  labs(title = "Figure 1.4: Gear Proportions")
+```
+
+```{r, include=FALSE, fig.height=2, fig.width=3}
+ggplot(data = Emissions) + 
+  geom_bar(mapping = aes(x = Fuel_Type))+
+  labs(title = "Fuel Type by Count")
+
+ggplot(data = Emissions) + 
+  geom_bar(mapping = aes(x = gears))+
+  labs(title = "Gears by Count")
+```
+
+```{r, echo=FALSE}
+Emissions %>% 
+  ggplot(mapping = aes(x = as.factor(gears), y = CO2)) +
+  geom_boxplot() +
+  labs(title = "CO2 Emissions by Transmission Gears", x = "Number of Gears",
+       caption = "Figure 3")
+```
+
+### Fuel Type
+```{r, include=FALSE}
+model6 = lm(CO2 ~ Fuel_Type, data = Emissions)
+par(mfrow = c(2, 2), mar = c(2, 2, 2, 2)) 
+plot(model6, which = c(1, 2, 3, 5))
+par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
+```
+
+```{r, echo=FALSE, fig.height=2, fig.width=3}
+ggplot(data = Emissions) + 
+  geom_bar(mapping = aes(x = Fuel_Type, y = stat(prop), group = 1))+
+  labs(title = "Figure 1.3: Proportions for Fuel Type")
+```
+
+### mpg
+
+```{r, echo=FALSE}
+model7 = lm(CO2 ~ mpg, data = Emissions)
+par(mfrow = c(2, 2), mar = c(2, 2, 2, 2)) 
+plot(model7, which = c(1, 2, 3, 5))
+par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
+```
+
+### logmpg
+
+```{r, echo=FALSE}
+Emissions <- Emissions %>% 
+  mutate(logmpg = log(mpg), logCO2 = log(CO2), mpg2 = mpg^2)
+
+model8 <- lm(CO2 ~ logmpg, data = Emissions)
+par(mfrow = c(2, 2), mar = c(2, 2, 2, 2)) 
+plot(model8, which = c(1, 2, 3, 5))
+par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
+```
+
+
+```{r, include=FALSE}
+model9 <- lm(CO2 ~ mpg2, data = Emissions)
+par(mfrow = c(2, 2), mar = c(2, 2, 2, 2)) 
+plot(model9, which = c(1, 2, 3, 5))
+par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
+```
+
+
+```{r, include=FALSE}
+model10 <- lm(logCO2 ~ mpg, data = Emissions)
+par(mfrow = c(2, 2), mar = c(2, 2, 2, 2)) 
+plot(model10, which = c(1, 2, 3, 5))
+par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
+
+```
+
+
+```{r, echo=FALSE, fig.height=2, fig.width=3}
+Emissions %>% 
+  ggplot(mapping = aes(mpg)) +
+  geom_histogram(binwidth = 1)+
+   labs(title = "Histogram of mpg")
+
+Emissions %>% 
+  ggplot(mapping = aes(logmpg)) +
+  geom_histogram(binwidth = .05)+
+   labs(title = "Histogram of logmpg")
+```
+
+
+### LINE Assumptions for L/100 km Variables 
+
+```{r}
+CO2_Emissions <- CO2_Emissions %>% 
+  mutate(logfuelcomp = log(`Fuel Consumption Comb (L/100 km)`), logfuelhwy = log(`Fuel Consumption Hwy (L/100 km)`), logfuelcity = log(`Fuel Consumption City (L/100 km)`))
+
+model20 <- lm(CO2 ~ `Fuel Consumption Comb (L/100 km)`, data = CO2_Emissions)
+
+par(mfrow = c(2, 2), mar = c(2, 2, 2, 2)) 
+plot(model20, which = c(1, 2, 3, 5))
+par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
+
+model21 <- lm(CO2 ~ logfuelcomp, data = CO2_Emissions)
+
+par(mfrow = c(2, 2), mar = c(2, 2, 2, 2)) 
+plot(model21, which = c(1, 2, 3, 5))
+par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
+
+model22 <- lm(CO2 ~ `Fuel Consumption Hwy (L/100 km)`, data = CO2_Emissions)
+
+par(mfrow = c(2, 2), mar = c(2, 2, 2, 2)) 
+plot(model22, which = c(1, 2, 3, 5))
+par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
+
+model23 <- lm(CO2 ~ logfuelhwy, data = CO2_Emissions)
+
+par(mfrow = c(2, 2), mar = c(2, 2, 2, 2)) 
+plot(model23, which = c(1, 2, 3, 5))
+par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
+
+model24 <- lm(CO2 ~ `Fuel Consumption City (L/100 km)`, data = CO2_Emissions)
+
+par(mfrow = c(2, 2), mar = c(2, 2, 2, 2)) 
+plot(model24, which = c(1, 2, 3, 5))
+par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
+
+model25 <- lm(CO2 ~ logfuelcity, data = CO2_Emissions)
+
+par(mfrow = c(2, 2), mar = c(2, 2, 2, 2)) 
+plot(model25, which = c(1, 2, 3, 5))
+par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
+```
+
+Each variable model, except for CO2 by mpg and logmpg and CO2 by the L/100 km variables and log of the L/100 km variables, demonstrated linearity, independence, normality, and equal variance. The residuals vs. fitted plot shows us that prediction errors are around zero. The scale location plot demonstrates that as the predicted values change, the spread is not changing significantly. The Normal Quantile Quantile plot shows that the actual residuals are similar to the theorized residuals; since the points do not vary heavily from the line, we can assume normality. 
+
+The proportions and counts for each categorical variable tell us that: Fuel types X (Regular) and Z(Premium), Vehicle Classes small and standard SUVs, Makes Ford and BMW, and Transmission types A6 and AS6 are the most common.
+
+
+### 5 Number Summaries of Continuous Variables
+
+```{r, echo=FALSE}
+Emissions %>% 
+  select(CO2, Engine_Size, Cylinders, gears) %>% 
+  summary() #5 number summary for continuous variables
+```
+
+```{r, include=FALSE, fig.height=2, fig.width=3}
+Emissions %>% 
+  ggplot(mapping = aes(Engine_Size)) +
+  geom_histogram(binwidth = .25) +
+   labs(title = "Histogram of Engine Size")
+
+Emissions %>% 
+  ggplot(mapping = aes(Cylinders)) +
+  geom_histogram(bindwidth = 1) +
+   labs(title = "Histogram of Cylinders")
+```
+
+
+
+Looking at our summaries for our numerical predictors we see that CO2 has a mean of 262.8, Engine Size has a mean of 3.402, Cylinders has a mean of 5.897, and mpg has a mean of 25.55.
+
+### CO2 by Categorical Variables
+
+```{r, echo=FALSE}
+ggplot(data = Emissions, aes(y = CO2, x = Make)) + 
+  geom_boxplot()+
+   coord_flip() +
+  labs(title = "Figure 2.1: CO2 Emissions by Make")
+```
+
+It appears that make does have some relationship with CO2 emissions, given that the median emissions vary by make.
+
+```{r, include=FALSE}
+ggplot(data = Emissions, aes(y = CO2, x = Fuel_Type)) + 
+  geom_boxplot()+
+  labs(title = "Figure 2.3: CO2 Emissions by Fuel Type")
+```
+
+
+- Fuel type E (ethanol) has the highest median carbon dioxide emissions, but fuel type Z (premium gasoline) has the maximum emissions and a large spread. Fuel type X (regular gasoline) has a very wide range, from the lowest minimum to second-highest maximum in emissions. Fuel type D (diesel) has the least spread and has a fairly low interquatile range and median.   
+
+###CO2 Emissions by Continuous Variables
+
+```{r, echo=FALSE}
+
+#Summary for CO2 by Engine Size
+modelEng <- lm(CO2 ~ Engine_Size, data = Emissions)
+
+
+#Summary for CO2 by Cylinders
+modelCyl <- lm(CO2 ~ Cylinders, data = Emissions)
+
+#summary and plot of CO2 by transmission gears
+
+modelGears <- lm(CO2 ~ gears, data= Emissions)
+
+
+Emissions %>% 
+  ggplot(mapping = aes(x = gears, y = CO2, group= gears)) +
+  geom_boxplot() +
+  labs(title = "Figure 3.1: CO2 Emissions by gears")
+
+
+
+```
+
+All of the continuous variables appear to have a strong correlation with CO2  Emissions(g/km), which is partially seen in our EDA. Miles per gallon has the strongest negative correlation.
+
+### Stepwise Regression
+
+
+
+
+
+```{r, include=FALSE}
+# stepwise regression from full model with all interactions, EXCLUDING MPG
+model0= lm(CO2~1, data = Emissions)
+
+
+interaction_model = lm(CO2 ~ Make + Vehicle_Class + Engine_Size + Cylinders + gears + Fuel_Type + Make:Vehicle_Class + Make:Engine_Size + Make:Cylinders + Make:gears + Make:Fuel_Type + Vehicle_Class:Make +Vehicle_Class:Engine_Size + Vehicle_Class:Cylinders + Vehicle_Class:gears + Vehicle_Class:Fuel_Type + Engine_Size:Make + Engine_Size:Vehicle_Class  + Engine_Size:Cylinders  +  Engine_Size:gears +  Engine_Size:Fuel_Type + Cylinders:Make  +  Cylinders:Vehicle_Class +  Cylinders:Engine_Size +  Cylinders:gears +  Cylinders:Fuel_Type + gears:Make +  gears:Vehicle_Class + gears:Engine_Size  + gears:Cylinders +  gears:Fuel_Type +  Fuel_Type:Make +  Fuel_Type:Vehicle_Class + Fuel_Type:Engine_Size + Fuel_Type:Cylinders + Fuel_Type:gears, data = Emissions)
+summary(interaction_model)
+
+step(model0, direction = "both", scope = formula(interaction_model))
+
+
+```
+
+stepwise selection: 
+
+lm(formula = CO2 ~ Engine_Size + Vehicle_Class + Make + Fuel_Type + 
+    gears + Cylinders + Engine_Size:Make + Vehicle_Class:Make + 
+    Engine_Size:Vehicle_Class + Make:Fuel_Type + Make:gears + 
+    Vehicle_Class:gears + Fuel_Type:gears + Make:Cylinders + 
+    Vehicle_Class:Cylinders + gears:Cylinders + Engine_Size:Fuel_Type + 
+    Fuel_Type:Cylinders, data = Emissions)
+    
+    
+best interaction: make:gears, p value of 2.2e-16
+
+final_model = lm(formula = CO2 ~ Engine_Size + Vehicle_Class + Make + Fuel_Type + gears + Cylinders + Make:gears, data = Emissions)
+    
+
+```{r, echo=FALSE}
+# compare regualr model to full
+model_18 = lm(CO2 ~ Make + Vehicle_Class + Engine_Size + Cylinders + gears + Fuel_Type, data=Emissions)
+
+full_v_interaction <- anova(model_18, interaction_model, test= "Chisq") #very significant drop
+
+knitr::kable(full_v_interaction, caption = "Basic Model vs. Model with All Interactions")
+
+```
+
+### test the improvement each interaction makes to the full model though drop in deviance
+```{r, include=FALSE}
+# see if Engine_Size:Make offers significant improvement
+
+model_A = lm(formula = CO2 ~ Engine_Size + Vehicle_Class + Make + Fuel_Type + 
+    gears + Cylinders + Vehicle_Class:Make + 
+    Engine_Size:Vehicle_Class + Make:Fuel_Type + Make:gears + 
+    Vehicle_Class:gears + Fuel_Type:gears + Make:Cylinders + 
+    Vehicle_Class:Cylinders + gears:Cylinders + Engine_Size:Fuel_Type + 
+    Fuel_Type:Cylinders, data = Emissions)
+summary(model_A)
+
+anova(model_A, interaction_model, test="Chisq") #very significant drop 0.4699
+
+
+# see if Vehicle_Class:Make offers significant improvement
+
+model_B = lm(formula = CO2 ~ Engine_Size + Vehicle_Class + Make + Fuel_Type + 
+    gears + Cylinders + Engine_Size:Make +  
+    Engine_Size:Vehicle_Class + Make:Fuel_Type + Make:gears + 
+    Vehicle_Class:gears + Fuel_Type:gears + Make:Cylinders + 
+    Vehicle_Class:Cylinders + gears:Cylinders + Engine_Size:Fuel_Type + 
+    Fuel_Type:Cylinders, data = Emissions)
+
+anova(model_B, interaction_model, test="Chisq") #very significant drop 4.12e-11
+
+
+# see if Engine_Size:Vehicle_Class offers significant improvement
+model_C = lm(formula = CO2 ~ Engine_Size + Vehicle_Class + Make + Fuel_Type + 
+    gears + Cylinders + Engine_Size:Make + Vehicle_Class:Make + 
+    Make:Fuel_Type + Make:gears + 
+    Vehicle_Class:gears + Fuel_Type:gears + Make:Cylinders + 
+    Vehicle_Class:Cylinders + gears:Cylinders + Engine_Size:Fuel_Type + 
+    Fuel_Type:Cylinders, data = Emissions)
+
+anova(model_C, interaction_model, test="Chisq") #pretty significant: 0.0009771
+
+# see if Make:Fuel_Type offers significant improvement
+model_D = lm(formula = CO2 ~ Engine_Size + Vehicle_Class + Make + Fuel_Type + 
+    gears + Cylinders + Engine_Size:Make + Vehicle_Class:Make + 
+    Engine_Size:Vehicle_Class +  Make:gears + 
+    Vehicle_Class:gears + Fuel_Type:gears + Make:Cylinders + 
+    Vehicle_Class:Cylinders + gears:Cylinders + Engine_Size:Fuel_Type + 
+    Fuel_Type:Cylinders, data = Emissions)
+
+anova(model_D, interaction_model, test="Chisq") # very significant: 4.579e-05
+
+# see if Make:gears offers significant improvement
+model_E = lm(formula = CO2 ~ Engine_Size + Vehicle_Class + Make + Fuel_Type + 
+    gears + Cylinders + Engine_Size:Make + Vehicle_Class:Make + 
+    Engine_Size:Vehicle_Class + Make:Fuel_Type +
+    Vehicle_Class:gears + Fuel_Type:gears + Make:Cylinders + 
+    Vehicle_Class:Cylinders + gears:Cylinders + Engine_Size:Fuel_Type + 
+    Fuel_Type:Cylinders, data = Emissions)
+summary(model_E)
+
+anova(model_E, interaction_model, test="Chisq") #very significant: 2.2e-16
+
+# see if Vehicle_Class:gears offers significant improvement
+model_F = lm(formula = CO2 ~ Engine_Size + Vehicle_Class + Make + Fuel_Type + 
+    gears + Cylinders + Engine_Size:Make + Vehicle_Class:Make + 
+    Engine_Size:Vehicle_Class + Make:Fuel_Type + Make:gears + 
+    Fuel_Type:gears + Make:Cylinders + 
+    Vehicle_Class:Cylinders + gears:Cylinders + Engine_Size:Fuel_Type + 
+    Fuel_Type:Cylinders, data = Emissions)
+
+anova(model_F, interaction_model, test="Chisq") # pretty significant: 0.0001892
+
+# see if Fuel_Type:gears offers significant improvement
+model_G = lm(formula = CO2 ~ Engine_Size + Vehicle_Class + Make + Fuel_Type + 
+    gears + Cylinders + Engine_Size:Make + Vehicle_Class:Make + 
+    Engine_Size:Vehicle_Class + Make:Fuel_Type + Make:gears + 
+    Vehicle_Class:gears +  Make:Cylinders + 
+    Vehicle_Class:Cylinders + gears:Cylinders + Engine_Size:Fuel_Type + 
+    Fuel_Type:Cylinders, data = Emissions)
+
+anova(model_G, interaction_model, test="Chisq") #slightly significant: 0.01942
+
+# see if Make:Cylinders offers significant improvement
+model_H = lm(formula = CO2 ~ Engine_Size + Vehicle_Class + Make + Fuel_Type + 
+    gears + Cylinders + Engine_Size:Make + Vehicle_Class:Make + 
+    Engine_Size:Vehicle_Class + Make:Fuel_Type + Make:gears + 
+    Vehicle_Class:gears + Fuel_Type:gears + 
+    Vehicle_Class:Cylinders + gears:Cylinders + Engine_Size:Fuel_Type + 
+    Fuel_Type:Cylinders, data = Emissions)
+
+anova(model_H, interaction_model, test="Chisq") # very significant: 2.273e-06
+
+# see if Vehicle_Class:Cylinders offers significant improvement
+model_J = lm(formula = CO2 ~ Engine_Size + Vehicle_Class + Make + Fuel_Type + 
+    gears + Cylinders + Engine_Size:Make + Vehicle_Class:Make + 
+    Engine_Size:Vehicle_Class + Make:Fuel_Type + Make:gears + 
+    Vehicle_Class:gears + Fuel_Type:gears + Make:Cylinders + 
+    gears:Cylinders + Engine_Size:Fuel_Type + 
+    Fuel_Type:Cylinders, data = Emissions)
+
+anova(model_J, interaction_model, test="Chisq") # very significant: 4.492e-07
+
+# see if gears:Cylinders offers significant improvement
+model_K= lm(formula = CO2 ~ Engine_Size + Vehicle_Class + Make + Fuel_Type + 
+    gears + Cylinders + Engine_Size:Make + Vehicle_Class:Make + 
+    Engine_Size:Vehicle_Class + Make:Fuel_Type + Make:gears + 
+    Vehicle_Class:gears + Fuel_Type:gears + Make:Cylinders + 
+    Vehicle_Class:Cylinders + Engine_Size:Fuel_Type + 
+    Fuel_Type:Cylinders, data = Emissions)
+
+anova(model_K, interaction_model, test="Chisq") # very significant: 3.583e-14
+
+# see if Engine_Size:Fuel_Type offers significant improvement
+model_L = lm(formula = CO2 ~ Engine_Size + Vehicle_Class + Make + Fuel_Type + 
+    gears + Cylinders + Engine_Size:Make + Vehicle_Class:Make + 
+    Engine_Size:Vehicle_Class + Make:Fuel_Type + Make:gears + 
+    Vehicle_Class:gears + Fuel_Type:gears + Make:Cylinders + 
+    Vehicle_Class:Cylinders + gears:Cylinders + 
+    Fuel_Type:Cylinders, data = Emissions)
+
+anova(model_L, interaction_model, test="Chisq") #slightly significant: 0.00166
+
+# see if Fuel_Type:Cylinders offers significant improvement
+model_M = lm(formula = CO2 ~ Engine_Size + Vehicle_Class + Make + Fuel_Type + 
+    gears + Cylinders + Engine_Size:Make + Vehicle_Class:Make + 
+    Engine_Size:Vehicle_Class + Make:Fuel_Type + Make:gears + 
+    Vehicle_Class:gears + Fuel_Type:gears + Make:Cylinders + 
+    Vehicle_Class:Cylinders + gears:Cylinders + Engine_Size:Fuel_Type, 
+    data = Emissions)
+
+anova(model_M, interaction_model, test="Chisq") #slightly significant: 0.002215
+
+```
+
+
+
+We could get rid of Engine_Size:Vehicle_Class, Vehicle_Class:gears, Fuel_Type:gears, Engine_Size:Fuel_Type, Fuel_Type:Cylinders. These didn't pass .001 significance,  and we could also just say we chose the most significant intereactions. If so, this would be the new model: 
+
+
+
+
+
+### Adding Interactions
+
+```{r, include=FALSE}
+
+all_variables_model <- lm(formula= CO2 ~ Fuel_Type + Vehicle_Class + gears + Make + Cylinders, data = Emissions)
+summary(all_variables_model)
+
+
+#321.56989 - 1.66*(21.00) = 286.7099 #Intercept mpg 25%
+
+#33.65 - 1.26*(21) = 7.19 #Slope mpg 25%
+
+
+#321.56989 - 1.66*(29.00) = 273.4299 #Intercept mpg 75%
+#33.65 - 1.26*(29) = -2.89 #Slope mpg 75%
+
+
+ggplot(data = Emissions, aes(y = CO2, x = Cylinders)) + 
+  geom_point() +
+  geom_abline(intercept = 286.7099, slope = 7.19, 
+              linetype = 1, color = "red") +    # Solid line, mpg at 25th
+  geom_abline(intercept = 273.4299, slope = -2.89,
+              linetype = 2, color = "blue")     # Dashed line, mpg at 75th
+
+```
+
+## Citations
+
+Daziano, Ricardo A., et al. “Increasing the Influence of CO2 Emissions Information on Car Purchase.” Journal of Cleaner Production, vol. 164, Oct. 2017, pp. 861–71. ScienceDirect, doi:10.1016/j.jclepro.2017.07.001.
+
+“Global Temperature Report for 2019.” Berkeley Earth, http://berkeleyearth.org/archive/2019-temperatures/. Accessed 7 Oct. 2020.
+
+Kok, Robert. “New Car Preferences Move Away from Greater Size, Weight and Power: Impact of Dutch Consumer Choices on Average CO2-Emissions.” Transportation Research Part D: Transport and Environment, vol. 21, June 2013, pp. 53–61. ScienceDirect, doi:10.1016/j.trd.2013.02.006.
+
+Muhamad syakir Shukor, et al. “Automotive Industry: Not Easy Being Green.” ResearchGate, unknown, 8 Oct. 2017, www.researchgate.net/publication/320184730_Automotive_Industry_Not_Easy_Being_Green. Accessed 14 Nov. 2020.
+
